@@ -1,0 +1,26 @@
+{
+  "ws_port": 5210,
+  "mode": "llm_script",
+
+  "asr": {
+    "provider": "yandex",
+    "language": "ru-RU"
+  },
+
+  "llm": {
+    "provider": "yandex",
+    "temperature": 0.1,
+    "max_tokens": 20
+  },
+
+  "vad": {
+    "enabled": true,
+    "energy_threshold": 200,
+    "silence_frames": 25,
+    "min_speech_frames": 5
+  },
+
+  "telegram": {
+    "enabled": true
+  }
+}

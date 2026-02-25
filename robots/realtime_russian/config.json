@@ -1,0 +1,24 @@
+{
+  "ws_port": 5203,
+  "mode": "realtime",
+
+  "realtime": {
+    "voice": "jane",
+    "vad_threshold": 0.5,
+    "prefix_padding_ms": 300,
+    "silence_duration_ms": 500
+  },
+
+  "vad": {
+    "enabled": true,
+    "energy_threshold": 200,
+    "silence_frames": 25,
+    "min_speech_frames": 5
+  },
+
+  "telegram": {
+    "enabled": true
+  },
+
+  "greeting_text": ""
+}

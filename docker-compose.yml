@@ -1,0 +1,81 @@
+services:
+
+  # ── FreeSWITCH ───────────────────────────────────────────────
+  freeswitch:
+    build: ./freeswitch
+    container_name: freeswitch
+    network_mode: host
+    cap_add:
+      - SYS_NICE
+    volumes:
+      # Общая директория для WAV-файлов (playback робот → FreeSWITCH)
+      - /tmp/voice_pipeline:/tmp/voice_pipeline
+    restart: unless-stopped
+
+  # ── Роботы (run.py — FreeSWITCH → WebSocket) ────────────────
+  robot-pipeline:
+    build: .
+    network_mode: host
+    entrypoint: ["python", "run.py"]
+    command: ["robots/pipeline_russian"]
+    env_file:
+      - .env
+    volumes:
+      - /tmp/voice_pipeline:/tmp/voice_pipeline
+    depends_on:
+      - freeswitch
+    restart: unless-stopped
+
+  robot-llm-script:
+    build: .
+    network_mode: host
+    entrypoint: ["python", "run.py"]
+    command: ["robots/llm_script_russian"]
+    env_file:
+      - .env
+    volumes:
+      - /tmp/voice_pipeline:/tmp/voice_pipeline
+    depends_on:
+      - freeswitch
+    restart: unless-stopped
+
+  robot-realtime:
+    build: .
+    network_mode: host
+    entrypoint: ["python", "run.py"]
+    command: ["robots/realtime_russian"]
+    env_file:
+      - .env
+    volumes:
+      - /tmp/voice_pipeline:/tmp/voice_pipeline
+    depends_on:
+      - freeswitch
+    restart: unless-stopped
+
+  # ── Web-интерфейсы (web.py — браузерное демо) ───────────────
+  web:
+    build: .
+    network_mode: host
+    env_file:
+      - .env
+    entrypoint: ["python", "web.py"]
+    command: ["robots/pipeline_russian", "--port", "8000"]
+    restart: unless-stopped
+
+  web-llm-script:
+    build: .
+    network_mode: host
+    env_file:
+      - .env
+    entrypoint: ["python", "web.py"]
+    command: ["robots/llm_script_russian", "--port", "8001"]
+    restart: unless-stopped
+
+  web-realtime:
+    build: .
+    network_mode: host
+    env_file:
+      - .env
+    entrypoint: ["python", "web.py"]
+    command: ["robots/realtime_russian", "--port", "8002"]
+    restart: unless-stopped

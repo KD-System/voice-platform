@@ -1,0 +1,36 @@
+{
+  "ws_port": 5200,
+  "mode": "pipeline",
+
+  "asr": {
+    "provider": "yandex",
+    "language": "ru-RU"
+  },
+
+  "llm": {
+    "provider": "yandex",
+    "temperature": 0.5,
+    "max_tokens": 80
+  },
+
+  "tts": {
+    "provider": "yandex",
+    "voice": "alena",
+    "language": "ru-RU",
+    "speed": 1.0,
+    "sample_rate": 48000
+  },
+
+  "vad": {
+    "enabled": true,
+    "energy_threshold": 200,
+    "silence_frames": 25,
+    "min_speech_frames": 5
+  },
+
+  "telegram": {
+    "enabled": true
+  },
+
+  "greeting_text": ""
+}

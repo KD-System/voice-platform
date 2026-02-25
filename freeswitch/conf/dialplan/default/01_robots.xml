@@ -1,0 +1,31 @@
+<include>
+
+  <!--
+    Голосовые роботы.
+    Набери номер с SIP-телефона → FreeSWITCH → Lua → WebSocket робот.
+
+    Номера:
+      5200  — pipeline    (VAD → ASR → LLM → TTS)
+      5210  — llm_script  (VAD → ASR → LLM выбирает WAV)
+      5203  — realtime    (Yandex Realtime API)
+  -->
+
+  <extension name="robot-pipeline">
+    <condition field="destination_number" expression="^5200$">
+      <action application="lua" data="ws_bridge.lua 5200"/>
+    </condition>
+  </extension>
+
+  <extension name="robot-llm-script">
+    <condition field="destination_number" expression="^5210$">
+      <action application="lua" data="ws_bridge.lua 5210"/>
+    </condition>
+  </extension>
+
+  <extension name="robot-realtime">
+    <condition field="destination_number" expression="^5203$">
+      <action application="lua" data="ws_bridge.lua 5203"/>
+    </condition>
+  </extension>
+
+</include>

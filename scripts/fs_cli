@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""
+Drop-in замена fs_cli для Docker.
+Подключается к FreeSWITCH через ESL (Event Socket Layer) по TCP.
+
+Использование:
+  fs_cli -x "uuid_broadcast <uuid> /tmp/file.wav aleg"
+
+Переменные окружения:
+  FS_HOST          — адрес FreeSWITCH (default: 127.0.0.1)
+  FS_ESL_PORT      — порт ESL (default: 8021)
+  FS_ESL_PASSWORD  — пароль ESL (default: ClueCon)
+"""
+import os
+import socket
+import sys
+
+
+def _recvline(sock: socket.socket) -> str:
+    """Читает одну строку из сокета (до \\n)."""
+    buf = b""
+    while True:
+        b = sock.recv(1)
+        if not b or b == b"\n":
+            return buf.decode("utf-8", errors="replace")
+        buf += b
+
+
+def _recv_headers(sock: socket.socket) -> dict:
+    """Читает ESL-заголовки до пустой строки."""
+    headers = {}
+    while True:
+        line = _recvline(sock)
+        if not line:
+            break
+        if ":" in line:
+            key, val = line.split(":", 1)
+            headers[key.strip()] = val.strip()
+    return headers
+
+
+def _recv_body(sock: socket.socket, length: int) -> str:
+    """Читает ровно length байт из сокета."""
+    data = b""
+    while len(data) < length:
+        chunk = sock.recv(length - len(data))
+        if not chunk:
+            break
+        data += chunk
+    return data.decode("utf-8", errors="replace")
+
+
+def esl_command(cmd: str) -> str:
+    host = os.environ.get("FS_HOST", "127.0.0.1")
+    port = int(os.environ.get("FS_ESL_PORT", "8021"))
+    password = os.environ.get("FS_ESL_PASSWORD", "ClueCon")
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(5)
+    sock.connect((host, port))
+
+    try:
+        # 1. Сервер шлёт auth/request
+        _recv_headers(sock)
+
+        # 2. Аутентификация
+        sock.sendall(f"auth {password}\n\n".encode())
+        headers = _recv_headers(sock)
+        reply = headers.get("Reply-Text", "")
+        if "+OK" not in reply:
+            return f"-ERR auth failed: {reply}"
+
+        # 3. API-команда
+        sock.sendall(f"api {cmd}\n\n".encode())
+        headers = _recv_headers(sock)
+
+        content_length = int(headers.get("Content-Length", "0"))
+        if content_length > 0:
+            body = _recv_body(sock, content_length)
+        else:
+            body = headers.get("Reply-Text", "")
+
+        return body.strip()
+    finally:
+        sock.close()
+
+
+if __name__ == "__main__":
+    if "-x" in sys.argv:
+        idx = sys.argv.index("-x")
+        if idx + 1 < len(sys.argv):
+            result = esl_command(sys.argv[idx + 1])
+            print(result)
+            sys.exit(0)
+
+    print("Usage: fs_cli -x \"command\"", file=sys.stderr)
+    sys.exit(1)

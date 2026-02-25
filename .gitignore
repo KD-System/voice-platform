@@ -1,0 +1,9 @@
+venv/
+logs/
+recordings/
+__pycache__/
+*.pyc
+.env
+*.log
+*.wav
+!robots/*/greeting.wav
