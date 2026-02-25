@@ -130,11 +130,11 @@ def load_config(robot_dir: str | Path) -> dict:
     # Storage DSN из .env
     cfg["db"]["postgres_dsn"] = (
         cfg["db"].get("postgres_dsn")
-        or os.getenv("POSTGRES_DSN", "postgresql://voice:voice@localhost:5432/voice_platform")
+        or os.getenv("POSTGRES_DSN", "postgresql://voice:voice@postgres:5432/voice_platform")
     )
     cfg["db"]["mongo_uri"] = (
         cfg["db"].get("mongo_uri")
-        or os.getenv("MONGO_URI", "mongodb://voice:voice@localhost:27017")
+        or os.getenv("MONGO_URI", "mongodb://voice:voice@mongodb:27017")
     )
     cfg["db"]["mongo_database"] = (
         cfg["db"].get("mongo_database")
@@ -142,7 +142,7 @@ def load_config(robot_dir: str | Path) -> dict:
     )
     cfg["db"]["redis_url"] = (
         cfg["db"].get("redis_url")
-        or os.getenv("REDIS_URL", "redis://:voice@localhost:6379/0")
+        or os.getenv("REDIS_URL", "redis://:voice@redis:6379/0")
     )
 
     # LLM model: если не задана — строим из folder_id
