@@ -63,7 +63,13 @@ services:
   freeswitch:
     build: ./freeswitch
     container_name: freeswitch
-    network_mode: host
+    ports:
+      - "5060:5060/udp"
+      - "5060:5060/tcp"
+      - "5080:5080/udp"
+      - "5080:5080/tcp"
+      - "8021:8021"
+      - "16384-16484:16384-16484/udp"
     cap_add:
       - SYS_NICE
     volumes:
@@ -73,7 +79,8 @@ services:
   # ── Роботы (run.py — FreeSWITCH → WebSocket) ────────────────
   robot-pipeline:
     build: .
-    network_mode: host
+    ports:
+      - "5200:5200"
     entrypoint: ["python", "run.py"]
     command: ["robots/pipeline_russian"]
     env_file:
@@ -93,7 +100,8 @@ services:
 
   robot-llm-script:
     build: .
-    network_mode: host
+    ports:
+      - "5201:5201"
     entrypoint: ["python", "run.py"]
     command: ["robots/llm_script_russian"]
     env_file:
@@ -113,7 +121,8 @@ services:
 
   robot-realtime:
     build: .
-    network_mode: host
+    ports:
+      - "5202:5202"
     entrypoint: ["python", "run.py"]
     command: ["robots/realtime_russian"]
     env_file:
@@ -134,7 +143,8 @@ services:
   # ── Web-интерфейсы (web.py — браузерное демо) ───────────────
   web:
     build: .
-    network_mode: host
+    ports:
+      - "8000:8000"
     env_file:
       - .env
     entrypoint: ["python", "web.py"]
@@ -150,7 +160,8 @@ services:
 
   web-llm-script:
     build: .
-    network_mode: host
+    ports:
+      - "8001:8001"
     env_file:
       - .env
     entrypoint: ["python", "web.py"]
@@ -166,7 +177,8 @@ services:
 
   web-realtime:
     build: .
-    network_mode: host
+    ports:
+      - "8002:8002"
     env_file:
       - .env
     entrypoint: ["python", "web.py"]
