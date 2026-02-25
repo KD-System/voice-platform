@@ -53,7 +53,7 @@ def _load_session_class(mode: str):
     return getattr(module, class_name)
 
 
-def make_connection_handler(cfg: dict, SessionClass):
+def make_connection_handler(cfg: dict, SessionClass, storage=None):
     """Создаёт обработчик WebSocket-соединений с привязкой к конфигу."""
 
     async def handle_connection(websocket):
@@ -61,7 +61,7 @@ def make_connection_handler(cfg: dict, SessionClass):
         call_counter += 1
         call_id = f"call-{call_counter:04d}"
 
-        session = SessionClass(websocket, call_id, cfg)
+        session = SessionClass(websocket, call_id, cfg, storage=storage)
         try:
             async for message in websocket:
                 if isinstance(message, bytes):
@@ -111,6 +111,17 @@ async def main(robot_dir: str):
 
     SessionClass = _load_session_class(mode)
 
+    # === Storage ===
+    storage = None
+    if cfg.get("db", {}).get("enabled", True):
+        try:
+            from db import Storage
+            storage = Storage.from_config(cfg)
+            await storage.connect()
+        except Exception as e:
+            logger.warning(f"Storage unavailable, continuing without DB: {e}")
+            storage = None
+
     # Лог конфигурации
     logger.info("=" * 50)
     logger.info(f"Voice Platform v3 — {Path(robot_dir).name}")
@@ -133,13 +144,19 @@ async def main(robot_dir: str):
     greeting_text = cfg.get("greeting_text", "")
     gm = "WAV" if has_greeting else ("TTS" if greeting_text else "NONE")
     logger.info(f"Greeting: {gm} | Barge-in: {'ON' if vad_on else 'OFF'}")
+    db_status = "ON" if storage else "OFF"
+    logger.info(f"Storage: {db_status}")
     logger.info(f"ws://{host}:{port}")
     logger.info("=" * 50)
 
-    handler = make_connection_handler(cfg, SessionClass)
-    async with websockets.serve(handler, host, port, max_size=None,
-                                ping_interval=20, ping_timeout=10):
-        await asyncio.Future()
+    handler = make_connection_handler(cfg, SessionClass, storage=storage)
+    try:
+        async with websockets.serve(handler, host, port, max_size=None,
+                                    ping_interval=20, ping_timeout=10):
+            await asyncio.Future()
+    finally:
+        if storage:
+            await storage.close()
 
 
 if __name__ == "__main__":

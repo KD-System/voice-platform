@@ -40,6 +40,7 @@ logger = logging.getLogger("web")
 app = FastAPI()
 CFG = None
 ROBOT_NAME = ""
+STORAGE = None  # db.Storage (инициализируется при старте)
 
 
 def create_engines(cfg: dict):
@@ -104,11 +105,22 @@ async def index():
     return HTMLResponse(HTML.replace("{{ROBOT_NAME}}", ROBOT_NAME))
 
 
+_web_call_counter = 0
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
+    global _web_call_counter
+    _web_call_counter += 1
+
     await ws.accept()
     cfg = CFG
+    storage = STORAGE
     mode = cfg.get("mode", "pipeline")
+
+    call_id = f"web-{_web_call_counter:04d}"
+    call_start = time.time()
+    total_turns = 0
 
     # Движки
     asr, llm_engine, tts_engine = create_engines(cfg)
@@ -124,6 +136,17 @@ async def ws_endpoint(ws: WebSocket):
 
     # Контекст LLM
     messages = [{"role": "system", "content": cfg["system_prompt"]}]
+
+    # Storage: начало звонка
+    if storage:
+        try:
+            await storage.on_call_start(
+                call_id=call_id, uuid="", caller="web",
+                mode=mode, robot_name=ROBOT_NAME,
+                language=cfg["asr"].get("language", "ru-RU")[:2],
+            )
+        except Exception as e:
+            logger.error(f"[{call_id}] Storage on_call_start: {e}")
 
     # Для llm_script: загрузить треки
     tracks = {}
@@ -222,6 +245,18 @@ async def ws_endpoint(ws: WebSocket):
                     logger.info(f'ASR ({asr_ms}ms): "{text}"')
                     messages.append({"role": "user", "content": text})
                     await ws.send_json({"type": "transcript", "role": "user", "text": text})
+                    total_turns += 1
+
+                    # Storage: реплика пользователя
+                    if storage:
+                        try:
+                            await storage.on_user_speech(
+                                call_id=call_id, text=text,
+                                asr_provider=cfg["asr"]["provider"],
+                                asr_latency_ms=asr_ms,
+                            )
+                        except Exception:
+                            pass
 
                     if mode == "pipeline":
                         # LLM → TTS streaming
@@ -239,6 +274,17 @@ async def ws_endpoint(ws: WebSocket):
                         if full_response.strip():
                             messages.append({"role": "assistant", "content": full_response.strip()})
                             await ws.send_json({"type": "transcript", "role": "bot", "text": full_response.strip()})
+                            # Storage: ответ бота (pipeline)
+                            if storage:
+                                try:
+                                    await storage.on_bot_response(
+                                        call_id=call_id,
+                                        text=full_response.strip(),
+                                        llm_provider=cfg["llm"].get("provider", "yandex"),
+                                        tts_provider=cfg["tts"]["provider"],
+                                    )
+                                except Exception:
+                                    pass
 
                     elif mode == "llm_script":
                         # LLM → выбор WAV
@@ -252,6 +298,15 @@ async def ws_endpoint(ws: WebSocket):
                             await ws.send_json({"type": "audio", "sample_rate": rate})
                             await ws.send_bytes(pcm_out)
                             await ws.send_json({"type": "transcript", "role": "bot", "text": f"[{chosen}]"})
+                            # Storage: ответ бота (llm_script)
+                            if storage:
+                                try:
+                                    await storage.on_bot_response(
+                                        call_id=call_id, text=chosen,
+                                        llm_provider=cfg["llm"].get("provider", "yandex"),
+                                    )
+                                except Exception:
+                                    pass
                         else:
                             logger.warning(f"Unknown track: {chosen}")
                             await ws.send_json({"type": "transcript", "role": "bot", "text": f"[unknown: {chosen}]"})
@@ -270,13 +325,25 @@ async def ws_endpoint(ws: WebSocket):
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
     finally:
+        # Storage: завершение звонка
+        if storage:
+            try:
+                dur = time.time() - call_start
+                await storage.on_call_end(
+                    call_id=call_id,
+                    duration_sec=dur,
+                    turns=total_turns,
+                    barge_ins=0,
+                )
+            except Exception:
+                pass
         for engine in [asr, llm_engine, tts_engine]:
             if engine:
                 try:
                     await engine.close()
                 except Exception:
                     pass
-        logger.info("Session ended")
+        logger.info(f"[{call_id}] Session ended")
 
 
 # ── HTML ──────────────────────────────────────────────────────────
@@ -483,6 +550,20 @@ if __name__ == "__main__":
 
     CFG = load_config(str(robot_path))
     ROBOT_NAME = robot_path.name
+
+    # Storage
+    if CFG.get("db", {}).get("enabled", True):
+        try:
+            import asyncio as _aio
+            from db import Storage
+            STORAGE = Storage.from_config(CFG)
+            _aio.get_event_loop().run_until_complete(STORAGE.connect())
+            logger.info("Storage: ON")
+        except Exception as e:
+            logger.warning(f"Storage unavailable: {e}")
+            STORAGE = None
+    else:
+        logger.info("Storage: OFF")
 
     mode = CFG.get("mode", "pipeline")
     logger.info(f"Web: {ROBOT_NAME} (mode={mode})")
