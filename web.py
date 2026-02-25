@@ -13,6 +13,7 @@ import logging
 import os
 import sys
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -38,10 +39,35 @@ logging.basicConfig(
 )
 logger = logging.getLogger("web")
 
-app = FastAPI()
 CFG = None
 ROBOT_NAME = ""
-STORAGE = None  # db.Storage (инициализируется при старте)
+STORAGE = None  # db.Storage (инициализируется в startup event uvicorn'а)
+
+
+@asynccontextmanager
+async def _lifespan(application):
+    """Startup/shutdown Storage в event loop uvicorn'а."""
+    global STORAGE
+    if CFG and CFG.get("db", {}).get("enabled", True):
+        try:
+            from db import Storage
+            STORAGE = Storage.from_config(CFG)
+            await STORAGE.connect()
+            logger.info("Storage: ON")
+        except Exception as e:
+            logger.warning(f"Storage unavailable: {e}")
+            STORAGE = None
+    else:
+        logger.info("Storage: OFF")
+
+    yield  # приложение работает
+
+    if STORAGE:
+        await STORAGE.close()
+        logger.info("Storage closed")
+
+
+app = FastAPI(lifespan=_lifespan)
 
 
 def create_engines(cfg: dict):
@@ -579,20 +605,6 @@ if __name__ == "__main__":
 
     CFG = load_config(str(robot_path))
     ROBOT_NAME = robot_path.name
-
-    # Storage
-    if CFG.get("db", {}).get("enabled", True):
-        try:
-            import asyncio as _aio
-            from db import Storage
-            STORAGE = Storage.from_config(CFG)
-            _aio.get_event_loop().run_until_complete(STORAGE.connect())
-            logger.info("Storage: ON")
-        except Exception as e:
-            logger.warning(f"Storage unavailable: {e}")
-            STORAGE = None
-    else:
-        logger.info("Storage: OFF")
 
     mode = CFG.get("mode", "pipeline")
     logger.info(f"Web: {ROBOT_NAME} (mode={mode})")
