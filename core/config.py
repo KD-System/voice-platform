@@ -134,7 +134,7 @@ def load_config(robot_dir: str | Path) -> dict:
     )
     cfg["db"]["mongo_uri"] = (
         cfg["db"].get("mongo_uri")
-        or os.getenv("MONGO_URI", "mongodb://voice:voice@mongodb:27017")
+        or os.getenv("MONGO_URI", "mongodb://voice:voice@mongodb:27017/?authSource=admin")
     )
     cfg["db"]["mongo_database"] = (
         cfg["db"].get("mongo_database")

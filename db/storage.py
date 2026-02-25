@@ -39,11 +39,11 @@ class Storage:
         db_cfg = cfg.get("db", {})
 
         pg_dsn = db_cfg.get("postgres_dsn",
-                            "postgresql://voice:voice@localhost:5432/voice_platform")
+                            "postgresql://voice:voice@postgres:5432/voice_platform")
         mongo_uri = db_cfg.get("mongo_uri",
-                               "mongodb://voice:voice@localhost:27017")
+                               "mongodb://voice:voice@mongodb:27017/?authSource=admin")
         mongo_db = db_cfg.get("mongo_database", "voice_platform")
-        redis_url = db_cfg.get("redis_url", "redis://localhost:6379/0")
+        redis_url = db_cfg.get("redis_url", "redis://:voice@redis:6379/0")
 
         return cls(
             pg=PostgresClient(pg_dsn),
