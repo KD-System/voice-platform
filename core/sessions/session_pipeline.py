@@ -27,10 +27,11 @@ class PipelineSession:
     Создаётся для каждого входящего WebSocket-соединения от FreeSWITCH.
     """
 
-    def __init__(self, ws, call_id: str, cfg: dict):
+    def __init__(self, ws, call_id: str, cfg: dict, storage=None):
         self.ws = ws
         self.call_id = call_id
         self.cfg = cfg
+        self.storage = storage  # db.Storage (опционально)
 
         # Состояние
         self.uuid = None
@@ -136,6 +137,22 @@ class PipelineSession:
         if self.caller_number != "unknown":
             logger.info(f"[{self.call_id}] Caller: {self.caller_number}")
 
+        # === Storage: начало звонка ===
+        if self.storage:
+            try:
+                from pathlib import Path
+                robot_name = Path(self.cfg["robot_dir"]).name
+                await self.storage.on_call_start(
+                    call_id=self.call_id,
+                    uuid=self.uuid or "",
+                    caller=self.caller_number,
+                    mode="pipeline",
+                    robot_name=robot_name,
+                    language=self.cfg["asr"].get("language", "ru-RU")[:2],
+                )
+            except Exception as e:
+                logger.error(f"[{self.call_id}] Storage on_call_start: {e}")
+
         # === GREETING ===
         t0 = time.time()
         greeting_text = self.cfg.get("greeting_text", "")
@@ -196,6 +213,18 @@ class PipelineSession:
             transcript=self.transcript,
         )
 
+        # === Storage: завершение звонка ===
+        if self.storage:
+            try:
+                await self.storage.on_call_end(
+                    call_id=self.call_id,
+                    duration_sec=dur,
+                    turns=self.total_turns,
+                    barge_ins=self.barge_in_count,
+                )
+            except Exception as e:
+                logger.error(f"[{self.call_id}] Storage on_call_end: {e}")
+
         # === Cleanup провайдеров ===
         for engine in [self.asr_engine, self.tts_engine, self.llm_engine]:
             if engine:
@@ -219,6 +248,8 @@ class PipelineSession:
                 self.barge_in_triggered = True
                 await self.playback.stop()
                 self.vad.start_listening_after_barge_in(pcm_data)
+                if self.storage:
+                    asyncio.create_task(self.storage.on_barge_in(call_id=self.call_id))
             return
 
         # Обычный режим — VAD
@@ -257,6 +288,14 @@ class PipelineSession:
         self.messages.append({"role": "user", "content": text})
         self.transcript.append(f"\U0001f9d1Client: {text}")
         self.turn_metrics.append({"turn": self.total_turns, "asr_ms": asr_ms, "text": text})
+
+        # Storage: реплика пользователя
+        if self.storage:
+            asyncio.create_task(self.storage.on_user_speech(
+                call_id=self.call_id, text=text,
+                asr_provider=self.cfg["asr"]["provider"],
+                asr_latency_ms=asr_ms,
+            ))
 
         # === LLM → TTS streaming по предложениям ===
         tl = time.time()
@@ -304,6 +343,18 @@ class PipelineSession:
         if full_response.strip():
             self.messages.append({"role": "assistant", "content": full_response.strip()})
             self.transcript.append(f"\U0001f916Bot: {full_response.strip()}")
+
+            # Storage: ответ бота
+            if self.storage:
+                llm_total_ms = int((time.time() - tl) * 1000)
+                asyncio.create_task(self.storage.on_bot_response(
+                    call_id=self.call_id,
+                    text=full_response.strip(),
+                    llm_provider=self.cfg["llm"].get("provider", "yandex"),
+                    llm_latency_ms=llm_total_ms,
+                    tts_provider=self.cfg["tts"]["provider"],
+                    tts_latency_ms=0,
+                ))
 
         total_ms = int((time.time() - t0) * 1000)
         logger.info(f"[{self.call_id}] Pipeline: {total_ms}ms total, ASR={asr_ms}ms, "

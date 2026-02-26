@@ -1,21 +1,86 @@
 services:
 
+  # ── Базы данных ─────────────────────────────────────────────────
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: voice-postgres
+    environment:
+      POSTGRES_DB: voice_platform
+      POSTGRES_USER: voice
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-voice}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voice -d voice_platform"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  mongodb:
+    image: mongo:7
+    container_name: voice-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: voice
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-voice}
+      MONGO_INITDB_DATABASE: voice_platform
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodata:/data/db
+      - ./db/migrations/002_mongo_indexes.js:/docker-entrypoint-initdb.d/002_mongo_indexes.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: voice-redis
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:-voice}
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-voice}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   # ── FreeSWITCH ───────────────────────────────────────────────
   freeswitch:
     build: ./freeswitch
     container_name: freeswitch
-    network_mode: host
+    ports:
+      - "5060:5060/udp"
+      - "5060:5060/tcp"
+      - "5080:5080/udp"
+      - "5080:5080/tcp"
+      - "8021:8021"
+      - "16384-16484:16384-16484/udp"
     cap_add:
       - SYS_NICE
     volumes:
-      # Общая директория для WAV-файлов (playback робот → FreeSWITCH)
       - /tmp/voice_pipeline:/tmp/voice_pipeline
     restart: unless-stopped
 
   # ── Роботы (run.py — FreeSWITCH → WebSocket) ────────────────
   robot-pipeline:
     build: .
-    network_mode: host
+    ports:
+      - "5200:5200"
     entrypoint: ["python", "run.py"]
     command: ["robots/pipeline_russian"]
     env_file:
@@ -23,12 +88,20 @@ services:
     volumes:
       - /tmp/voice_pipeline:/tmp/voice_pipeline
     depends_on:
-      - freeswitch
+      freeswitch:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   robot-llm-script:
     build: .
-    network_mode: host
+    ports:
+      - "5201:5201"
     entrypoint: ["python", "run.py"]
     command: ["robots/llm_script_russian"]
     env_file:
@@ -36,12 +109,20 @@ services:
     volumes:
       - /tmp/voice_pipeline:/tmp/voice_pipeline
     depends_on:
-      - freeswitch
+      freeswitch:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   robot-realtime:
     build: .
-    network_mode: host
+    ports:
+      - "5202:5202"
     entrypoint: ["python", "run.py"]
     command: ["robots/realtime_russian"]
     env_file:
@@ -49,33 +130,69 @@ services:
     volumes:
       - /tmp/voice_pipeline:/tmp/voice_pipeline
     depends_on:
-      - freeswitch
+      freeswitch:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   # ── Web-интерфейсы (web.py — браузерное демо) ───────────────
   web:
     build: .
-    network_mode: host
+    ports:
+      - "8000:8000"
     env_file:
       - .env
     entrypoint: ["python", "web.py"]
     command: ["robots/pipeline_russian", "--port", "8000"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   web-llm-script:
     build: .
-    network_mode: host
+    ports:
+      - "8001:8001"
     env_file:
       - .env
     entrypoint: ["python", "web.py"]
     command: ["robots/llm_script_russian", "--port", "8001"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   web-realtime:
     build: .
-    network_mode: host
+    ports:
+      - "8002:8002"
     env_file:
       - .env
     entrypoint: ["python", "web.py"]
     command: ["robots/realtime_russian", "--port", "8002"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  pgdata:
+  mongodata:
+  redisdata:

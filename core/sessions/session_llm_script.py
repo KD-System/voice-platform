@@ -33,10 +33,11 @@ class LLMScriptSession:
     LLM-Script сессия: приветствие → слушай → ASR → LLM выбирает WAV → play.
     """
 
-    def __init__(self, ws, call_id: str, cfg: dict):
+    def __init__(self, ws, call_id: str, cfg: dict, storage=None):
         self.ws = ws
         self.call_id = call_id
         self.cfg = cfg
+        self.storage = storage  # db.Storage (опционально)
 
         # Состояние
         self.uuid = None
@@ -154,6 +155,21 @@ class LLMScriptSession:
         # Номер звонящего
         self.caller_number = await self.playback.get_caller_number()
 
+        # Storage: начало звонка
+        if self.storage:
+            try:
+                robot_name = Path(self.cfg["robot_dir"]).name
+                await self.storage.on_call_start(
+                    call_id=self.call_id,
+                    uuid=self.uuid or "",
+                    caller=self.caller_number,
+                    mode="llm_script",
+                    robot_name=robot_name,
+                    language=self.cfg["asr"].get("language", "ru-RU")[:2],
+                )
+            except Exception as e:
+                logger.error(f"[{self.call_id}] Storage on_call_start: {e}")
+
         # Greeting
         t0 = time.time()
         if self._greeting_pcm:
@@ -203,6 +219,18 @@ class LLMScriptSession:
             transcript=self.transcript,
         )
 
+        # Storage: завершение звонка
+        if self.storage:
+            try:
+                await self.storage.on_call_end(
+                    call_id=self.call_id,
+                    duration_sec=dur,
+                    turns=self.total_turns,
+                    barge_ins=self.barge_in_count,
+                )
+            except Exception as e:
+                logger.error(f"[{self.call_id}] Storage on_call_end: {e}")
+
         # Cleanup
         for engine in [self.asr_engine, self.llm_engine]:
             if engine:
@@ -224,6 +252,8 @@ class LLMScriptSession:
                 self.barge_in_triggered = True
                 await self.playback.stop()
                 self.vad.start_listening_after_barge_in(pcm_data)
+                if self.storage:
+                    asyncio.create_task(self.storage.on_barge_in(call_id=self.call_id))
             return
 
         # VAD
@@ -261,6 +291,14 @@ class LLMScriptSession:
         self.transcript.append(f"\U0001f9d1Client: {text}")
         self.turn_metrics.append({"turn": self.total_turns, "asr_ms": asr_ms, "text": text})
 
+        # Storage: реплика пользователя
+        if self.storage:
+            asyncio.create_task(self.storage.on_user_speech(
+                call_id=self.call_id, text=text,
+                asr_provider=self.cfg["asr"]["provider"],
+                asr_latency_ms=asr_ms,
+            ))
+
         # === LLM → имя файла ===
         tl = time.time()
         try:
@@ -273,6 +311,15 @@ class LLMScriptSession:
 
         logger.info(f"[{self.call_id}] LLM ({llm_ms}ms): \"{chosen_file}\"")
         self.messages.append({"role": "assistant", "content": chosen_file})
+
+        # Storage: ответ бота
+        if self.storage:
+            asyncio.create_task(self.storage.on_bot_response(
+                call_id=self.call_id,
+                text=chosen_file,
+                llm_provider=self.cfg["llm"].get("provider", "yandex"),
+                llm_latency_ms=llm_ms,
+            ))
 
         # === Play WAV ===
         if chosen_file in self._tracks:

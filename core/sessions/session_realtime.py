@@ -34,10 +34,11 @@ class RealtimeSession:
     Yandex WS → PCM → FS playback
     """
 
-    def __init__(self, ws, call_id: str, cfg: dict):
+    def __init__(self, ws, call_id: str, cfg: dict, storage=None):
         self.fs_ws = ws
         self.call_id = call_id
         self.cfg = cfg
+        self.storage = storage  # db.Storage (опционально)
 
         # Состояние
         self.uuid = None
@@ -110,6 +111,22 @@ class RealtimeSession:
 
             self.ai_ready.set()
 
+            # Storage: начало звонка
+            if self.storage:
+                try:
+                    from pathlib import Path
+                    robot_name = Path(self.cfg["robot_dir"]).name
+                    await self.storage.on_call_start(
+                        call_id=self.call_id,
+                        uuid=self.uuid or "",
+                        caller=self.caller_number,
+                        mode="realtime",
+                        robot_name=robot_name,
+                        language="ru",
+                    )
+                except Exception as e:
+                    logger.error(f"[{self.call_id}] Storage on_call_start: {e}")
+
             # Приветствие — AI говорит первым
             await self.ai_ws.send(json.dumps({"type": "response.create"}))
 
@@ -152,6 +169,18 @@ class RealtimeSession:
             turn_metrics=[],
             transcript=self.transcript,
         )
+
+        # Storage: завершение звонка
+        if self.storage:
+            try:
+                await self.storage.on_call_end(
+                    call_id=self.call_id,
+                    duration_sec=dur,
+                    turns=self.total_turns,
+                    barge_ins=self.barge_in_count,
+                )
+            except Exception as e:
+                logger.error(f"[{self.call_id}] Storage on_call_end: {e}")
 
         # Cleanup
         if self.ai_ws:
@@ -207,6 +236,7 @@ class RealtimeSession:
                     d = event.get("delta", "")
                     if d:
                         logger.info(f"[{self.call_id}] AI: {d}")
+                        self._last_response_text = getattr(self, '_last_response_text', '') + d
 
                 elif t == "response.done":
                     buf_size = len(self.response_audio)
@@ -215,12 +245,28 @@ class RealtimeSession:
                         await self._play_response(bytes(self.response_audio))
                         self.response_audio = bytearray()
                     self.total_turns += 1
+                    # Storage: ответ бота
+                    resp_text = getattr(self, '_last_response_text', '')
+                    if resp_text and self.storage:
+                        self.transcript.append(f"\U0001f916Bot: {resp_text}")
+                        asyncio.create_task(self.storage.on_bot_response(
+                            call_id=self.call_id, text=resp_text,
+                            llm_provider="yandex_realtime",
+                            llm_latency_ms=0,
+                        ))
+                    self._last_response_text = ''
 
                 elif t == "conversation.item.input_audio_transcription.completed":
                     tr = event.get("transcript", "")
                     if tr:
                         logger.info(f"[{self.call_id}] User: {tr}")
                         self.transcript.append(f"\U0001f9d1Client: {tr}")
+                        if self.storage:
+                            asyncio.create_task(self.storage.on_user_speech(
+                                call_id=self.call_id, text=tr,
+                                asr_provider="yandex_realtime",
+                                asr_latency_ms=0,
+                            ))
 
                 elif t == "input_audio_buffer.speech_started":
                     logger.info(f"[{self.call_id}] >>> Speech")
@@ -228,6 +274,8 @@ class RealtimeSession:
                     self.response_audio = bytearray()
                     self.barge_in_count += 1
                     await self._stop_playback()
+                    if self.storage:
+                        asyncio.create_task(self.storage.on_barge_in(call_id=self.call_id))
 
                 elif t == "input_audio_buffer.speech_stopped":
                     logger.info(f"[{self.call_id}] <<< Silence")
