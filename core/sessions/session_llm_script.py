@@ -1,6 +1,6 @@
 """
 LLM-Script сессия — LLM выбирает какой WAV-файл проиграть.
-FreeSWITCH → WebSocket → VAD → ASR → LLM → play WAV
+WebSocket → VAD → ASR → LLM → play WAV
 
 Отличие от pipeline:
 - НЕТ TTS — ответы заранее записаны как WAV-файлы
@@ -21,7 +21,6 @@ from asr import get_asr
 from llm import get_llm
 from ..audio import load_wav
 from ..vad import EnergyVAD
-from ..playback import FSPlayback
 from ..logging import send_telegram, format_call_report
 from ..logging import save_call_log
 
@@ -145,15 +144,9 @@ class LLMScriptSession:
                                   temperature=llm_cfg.get("temperature", 0.3),
                                   max_tokens=llm_cfg.get("max_tokens", 50))
 
-        # Playback
-        self.playback = FSPlayback(self.uuid, self.call_id)
-
         logger.info(f"[{self.call_id}] LLM-Script mode: "
                      f"ASR={asr_cfg['provider']}, LLM={llm_cfg.get('provider', 'yandex')}, "
                      f"{len(self._tracks)} tracks")
-
-        # Номер звонящего
-        self.caller_number = await self.playback.get_caller_number()
 
         # Storage: начало звонка
         if self.storage:
