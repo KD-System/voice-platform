@@ -1,27 +1,23 @@
 # Voice Platform v3
 
-Платформа голосовых роботов с поддержкой телефонии (FreeSWITCH) и веб-интерфейса.
+Платформа голосовых роботов с веб-интерфейсом.
 
 ## Архитектура
 
 ```
- Телефон (SIP)                    Браузер
-      │                               │
-      ▼                               ▼
- FreeSWITCH ──WebSocket──►  run.py   web.py (FastAPI)
-                               │        │
-                   ┌───────────┴────────┘
-                   ▼
-            SessionClass (по mode из config.json)
-            ├── pipeline:   VAD → ASR → LLM(stream) → TTS → play
-            ├── realtime:   Yandex Realtime API (full-duplex)
-            └── llm_script: VAD → ASR → LLM выбирает WAV → play
-                   │
-                   ▼
-            db/Storage (неблокирующие записи)
-            ├── PostgreSQL — метаданные звонков
-            ├── MongoDB    — транскрипции + сегменты
-            └── Redis      — активные сессии, pub/sub
+ Браузер
+    │
+    ▼
+ web.py (FastAPI + WebSocket)
+    │
+    ▼
+ VAD → ASR → LLM → TTS → play
+    │
+    ▼
+ db/Storage (неблокирующие записи)
+ ├── PostgreSQL — метаданные звонков
+ ├── MongoDB    — транскрипции + сегменты
+ └── Redis      — активные сессии, pub/sub
 ```
 
 ### Поток одной реплики (pipeline)
@@ -43,8 +39,7 @@
 
 ```
 voice-platform/
-├── run.py                      # точка входа (FreeSWITCH → WebSocket)
-├── web.py                      # веб-демо (браузер → WebSocket, FastAPI)
+├── web.py                      # точка входа (браузер → WebSocket, FastAPI)
 ├── docker-compose.yml          # все сервисы
 ├── Dockerfile                  # образ приложения (python:3.12-slim)
 │
@@ -52,7 +47,6 @@ voice-platform/
 │   ├── config.py               # загрузка конфига (config.json + .env + дефолты)
 │   ├── vad.py                  # EnergyVAD — детекция речи по RMS энергии
 │   ├── audio.py                # load_wav, downsample, compute_rms
-│   ├── playback.py             # FSPlayback — воспроизведение через FreeSWITCH
 │   ├── logging/
 │   │   ├── call_logger.py      # JSON-логи в robots/*/logs/
 │   │   └── telegram.py         # отчёты в Telegram
@@ -86,12 +80,6 @@ voice-platform/
 │   ├── realtime_russian/
 │   └── llm_script_russian/     # + tracks/*.wav
 │
-├── freeswitch/
-│   ├── Dockerfile
-│   ├── scripts/audio_bridge.py # FIFO → WebSocket мост
-│   ├── scripts/ws_bridge.lua   # Lua dialplan
-│   └── conf/dialplan/          # маршрутизация номеров
-│
 └── .env                        # секреты (API-ключи, DSN)
 ```
 
@@ -122,10 +110,6 @@ docker compose up --build -d
 | Web (pipeline) | 8000 |
 | Web (llm_script) | 8001 |
 | Web (realtime) | 8002 |
-| Robot (pipeline) | 5200 |
-| Robot (llm_script) | 5201 |
-| Robot (realtime) | 5202 |
-| FreeSWITCH SIP | 5060 |
 | PostgreSQL | 5432 |
 | MongoDB | 27017 |
 | Redis | 6379 |
@@ -136,7 +120,7 @@ docker compose up --build -d
 
 | Файл | Описание |
 |------|----------|
-| `config.json` | Основной конфиг: mode, порт, провайдеры ASR/LLM/TTS, VAD |
+| `config.json` | Основной конфиг: mode, провайдеры ASR/LLM/TTS, VAD |
 | `prompt.txt` | Системный промпт для LLM |
 | `greeting.wav` | Приветственное аудио (опционально) |
 | `.env` | Переопределение секретов (опционально) |
@@ -148,7 +132,6 @@ docker compose up --build -d
 
 ```json
 {
-  "ws_port": 5200,
   "mode": "pipeline",
   "asr": {
     "provider": "yandex",
@@ -294,10 +277,6 @@ docker exec -it voice-postgres psql -U voice -d voice_platform \
 | `postgres` | postgres:16-alpine | — |
 | `mongodb` | mongo:7 | — |
 | `redis` | redis:7-alpine | — |
-| `freeswitch` | custom build | — |
-| `robot-pipeline` | custom build | freeswitch, postgres, mongodb, redis |
-| `robot-llm-script` | custom build | freeswitch, postgres, mongodb, redis |
-| `robot-realtime` | custom build | freeswitch, postgres, mongodb, redis |
 | `web` | custom build | postgres, mongodb, redis |
 | `web-llm-script` | custom build | postgres, mongodb, redis |
 | `web-realtime` | custom build | postgres, mongodb, redis |
@@ -309,15 +288,11 @@ docker exec -it voice-postgres psql -U voice -d voice_platform \
    cp -r robots/pipeline_russian robots/my_robot
    ```
 
-2. Отредактируйте `robots/my_robot/config.json` (mode, порт, провайдеры)
+2. Отредактируйте `robots/my_robot/config.json` (mode, провайдеры)
 
 3. Напишите промпт в `robots/my_robot/prompt.txt`
 
 4. Запустите:
    ```bash
-   # Локально
    python web.py robots/my_robot --port 8003
-
-   # Или через run.py (для FreeSWITCH)
-   python run.py robots/my_robot
    ```

@@ -1,6 +1,6 @@
 """
 Realtime-сессия — Yandex Realtime API.
-FreeSWITCH ↔ WebSocket ↔ Yandex Realtime (full-duplex)
+WebSocket ↔ Yandex Realtime (full-duplex)
 
 Отличие от pipeline:
 - НЕТ отдельных ASR/LLM/TTS — всё делает Yandex Realtime API
@@ -12,26 +12,21 @@ import asyncio
 import base64
 import json
 import logging
-import os
 from datetime import datetime
 
 import websockets
 
-from ..audio import downsample, save_wav
 from ..logging import send_telegram, format_call_report
 from ..logging import save_call_log
 
 logger = logging.getLogger("core.sessions.session_realtime")
 
-TTS_DIR = "/tmp/voice_pipeline"
-os.makedirs(TTS_DIR, exist_ok=True)
-
 
 class RealtimeSession:
     """
     Full-duplex сессия с Yandex Realtime API.
-    FS аудио → base64 → Yandex WS
-    Yandex WS → PCM → FS playback
+    Аудио → base64 → Yandex WS
+    Yandex WS → PCM → WebSocket playback
     """
 
     def __init__(self, ws, call_id: str, cfg: dict, storage=None):
@@ -55,8 +50,6 @@ class RealtimeSession:
 
         # Playback
         self.is_playing = False
-        self._file_counter = 0
-        self._temp_files = []
 
         # Метрики
         self.transcript = []
@@ -188,14 +181,9 @@ class RealtimeSession:
                 await self.ai_ws.close()
             except Exception:
                 pass
-        for f in self._temp_files:
-            try:
-                os.unlink(f)
-            except OSError:
-                pass
 
     async def handle_audio(self, pcm_data: bytes):
-        """Отправить аудио-чанк от FS в Yandex Realtime."""
+        """Отправить аудио-чанк в Yandex Realtime."""
         if not self.ai_ready.is_set():
             try:
                 await asyncio.wait_for(self.ai_ready.wait(), timeout=5.0)
@@ -299,32 +287,17 @@ class RealtimeSession:
     # ── Playback ────────────────────────────────────────────────
 
     async def _play_response(self, audio_48k: bytes):
-        """Даунсэмпл 48kHz→8kHz и проиграть через FS."""
-        if not self.uuid or not self.is_active:
+        """Отправить аудио-ответ через WebSocket."""
+        if not self.is_active:
             return
 
-        audio_8k = downsample(audio_48k, 48000, 8000)
-        idx = self._file_counter
-        self._file_counter += 1
-        wav_path = f"{TTS_DIR}/{self.call_id}_{idx}.wav"
-        self._temp_files.append(wav_path)
-
-        save_wav(wav_path, audio_8k, 8000)
-
-        duration_ms = len(audio_8k) // 16
+        duration_ms = len(audio_48k) // 96  # PCM16 @ 48kHz: 96 bytes/ms
         logger.info(f"[{self.call_id}] Playing {duration_ms}ms")
 
         self.is_playing = True
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "fs_cli", "-x", f"uuid_broadcast {self.uuid} {wav_path} aleg",
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-            stdout, _ = await proc.communicate()
-
-            if "+OK" not in stdout.decode():
-                self.is_playing = False
-                return
-
+            await self.fs_ws.send(audio_48k)
+            # Ждём пока закончится проигрывание (или barge-in)
             elapsed = 0
             while elapsed < duration_ms and self.is_playing and self.is_active:
                 await asyncio.sleep(0.1)
@@ -336,13 +309,6 @@ class RealtimeSession:
 
     async def _stop_playback(self):
         """Остановить проигрывание (barge-in)."""
-        if self.uuid and self.is_playing:
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    "fs_cli", "-x", f"uuid_break {self.uuid} all",
-                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-                await proc.communicate()
-                self.is_playing = False
-                logger.info(f"[{self.call_id}] Barge-in: playback stopped")
-            except Exception:
-                pass
+        if self.is_playing:
+            self.is_playing = False
+            logger.info(f"[{self.call_id}] Barge-in: playback stopped")

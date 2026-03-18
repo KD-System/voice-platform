@@ -1,6 +1,6 @@
 """
 Единая сессия голосового пайплайна.
-FreeSWITCH → WebSocket → VAD → ASR → LLM(stream) → TTS → FreeSWITCH
+WebSocket → VAD → ASR → LLM(stream) → TTS → WebSocket
 
 Один класс обрабатывает любого робота — вся специфика в config.
 """
@@ -14,7 +14,6 @@ from llm import get_llm
 from tts import get_tts
 from ..audio import downsample, load_wav
 from ..vad import EnergyVAD
-from ..playback import FSPlayback
 from ..logging import send_telegram, format_call_report
 from ..logging import save_call_log
 
@@ -24,7 +23,7 @@ logger = logging.getLogger("core.sessions.session_pipeline")
 class PipelineSession:
     """
     Единая сессия звонка.
-    Создаётся для каждого входящего WebSocket-соединения от FreeSWITCH.
+    Создаётся для каждого входящего WebSocket-соединения.
     """
 
     def __init__(self, ws, call_id: str, cfg: dict, storage=None):
@@ -62,7 +61,7 @@ class PipelineSession:
             enabled=vad_cfg["enabled"],
         )
 
-        # Playback (создаётся когда получим UUID)
+        # Playback
         self.playback = None
 
         # Greeting PCM (предзагружен)
@@ -125,17 +124,9 @@ class PipelineSession:
                                   temperature=llm_cfg.get("temperature", 0.5),
                                   max_tokens=llm_cfg.get("max_tokens", 80))
 
-        # === Playback ===
-        self.playback = FSPlayback(self.uuid, self.call_id)
-
         logger.info(f"[{self.call_id}] Providers ready: "
                      f"ASR={asr_cfg['provider']} TTS={tts_cfg['provider']} "
                      f"LLM={llm_cfg.get('provider', 'yandex')}")
-
-        # Номер звонящего
-        self.caller_number = await self.playback.get_caller_number()
-        if self.caller_number != "unknown":
-            logger.info(f"[{self.call_id}] Caller: {self.caller_number}")
 
         # === Storage: начало звонка ===
         if self.storage:
@@ -236,7 +227,7 @@ class PipelineSession:
     # ── VAD + обработка аудио ──────────────────────────────────────
 
     async def handle_audio(self, pcm_data: bytes):
-        """Обработка каждого аудио-чанка от FreeSWITCH."""
+        """Обработка каждого аудио-чанка."""
         if not self.greeting_done:
             return
 
