@@ -1,45 +1,38 @@
-# Мультиагентная конфигурация для IDram
+# Мультиагентная конфигурация
 #
-# managing_agent — классификатор (роутер), определяет намерение звонящего.
-# agents — специализированные агенты, каждый со своим промптом.
+# managing_agent — классификатор, анализирует запрос и возвращает JSON-инструкцию.
+# agents — специализированные агенты, каждый со своим промптом и базой знаний.
 
 managing_agent:
-  name: "Диспетчер"
-  model: ""               # пустая строка = модель из config.json
-  temperature: 0.1         # низкая — нужен детерминизм
-  max_tokens: 10           # ответ = одно слово (agent_id)
+  name: "Главный диспетчер"
+  model: ""                 # модель из config.json
+  temperature: 0.1          # низкая — нужен детерминизм
+  max_tokens: 60            # JSON-инструкция (~30-50 токенов)
   prompt: prompts/router.txt
   color: "#9E9E9E"
 
 agents:
-  general:
-    name: "Общие вопросы"
-    prompt: prompts/general.txt
-    temperature: 0.5
-    max_tokens: 80
-    color: "#4CAF50"
-
-  transfers:
-    name: "Денежные переводы"
-    prompt: prompts/transfers.txt
+  booking_agent:
+    name: "Бронирование"
+    prompt: prompts/booking.txt
     temperature: 0.4
-    max_tokens: 100
+    max_tokens: 120
     color: "#2196F3"
 
-  payments:
-    name: "Платежи и пополнения"
-    prompt: prompts/payments.txt
-    temperature: 0.4
+  info_agent:
+    name: "Справочная информация"
+    prompt: prompts/info.txt
+    temperature: 0.5
     max_tokens: 100
-    color: "#FF9800"
+    color: "#4CAF50"
 
-  complaint:
+  complaint_agent:
     name: "Жалобы и проблемы"
     prompt: prompts/complaint.txt
     temperature: 0.6
-    max_tokens: 120
+    max_tokens: 150
     color: "#F44336"
 
 routing:
   sticky: true
-  fallback: general
+  fallback: info_agent
