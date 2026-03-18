@@ -203,6 +203,31 @@ async def ws_endpoint(ws: WebSocket):
                 f"Ничего кроме имени файла. Без кавычек, без пояснений."
             )
 
+    # Мультиагентный режим
+    agents_config = cfg.get("agents_config")
+    router = None
+    agent_llm_engines = {}
+    if agents_config and mode == "pipeline":
+        from core.router import AgentRouter
+        llm_kwargs = {
+            "provider": cfg["llm"].get("provider", "yandex"),
+            "api_key": cfg["secrets"]["yandex_api_key"],
+            "folder_id": cfg["secrets"]["yandex_folder_id"],
+            "model": cfg["llm"].get("model", ""),
+        }
+        router = AgentRouter(agents_config, llm_kwargs)
+
+        for agent_id, agent in agents_config.agents.items():
+            agent_llm_engines[agent_id] = get_llm(
+                llm_kwargs["provider"],
+                api_key=llm_kwargs["api_key"],
+                folder_id=llm_kwargs["folder_id"],
+                model=agent.model or llm_kwargs["model"],
+                temperature=agent.temperature,
+                max_tokens=agent.max_tokens,
+            )
+        logger.info(f"[{call_id}] Multi-agent: router + {list(agents_config.agents.keys())}")
+
     is_responding = False
 
     # Greeting
@@ -292,11 +317,34 @@ async def ws_endpoint(ws: WebSocket):
                             logger.error(f"[{call_id}] Storage on_user_speech: {e}")
 
                     if mode == "pipeline":
+                        # Выбираем LLM и промпт (single или multi-agent)
+                        if router and agents_config:
+                            tr0 = time.time()
+                            agent_id = await router.classify(text, messages)
+                            router_ms = int((time.time() - tr0) * 1000)
+                            logger.info(f"[{call_id}] Router ({router_ms}ms): → {agent_id}")
+
+                            agent = agents_config.get_agent(agent_id)
+                            active_llm = agent_llm_engines.get(agent_id, llm_engine)
+
+                            # Формируем сообщения с промптом выбранного агента
+                            agent_messages = [{"role": "system", "content": agent.system_prompt}]
+                            for msg in messages:
+                                if msg["role"] != "system":
+                                    agent_messages.append(msg)
+
+                            await ws.send_json({"type": "agent", "agent_id": agent_id, "agent_name": agent.name, "color": agent.color})
+                        else:
+                            active_llm = llm_engine
+                            agent_messages = messages
+                            agent_id = None
+
                         # LLM → TTS streaming
                         full_response = ""
-                        async for sentence in llm_engine.chat_stream_sentences(messages):
+                        async for sentence in active_llm.chat_stream_sentences(agent_messages):
                             full_response += (" " if full_response else "") + sentence
-                            logger.info(f'LLM: "{sentence[:60]}"')
+                            agent_tag = f"[{agent_id}] " if agent_id else ""
+                            logger.info(f'{agent_tag}LLM: "{sentence[:60]}"')
                             r = await tts_engine.synthesize(sentence)
                             audio_out = r.get("audio", b"")
                             rate = r.get("sample_rate", 48000)
@@ -398,6 +446,17 @@ async def ws_endpoint(ws: WebSocket):
                     await engine.close()
                 except Exception:
                     pass
+        # Cleanup мультиагентных движков
+        if router:
+            try:
+                await router.close()
+            except Exception:
+                pass
+        for engine in agent_llm_engines.values():
+            try:
+                await engine.close()
+            except Exception:
+                pass
         logger.info(f"[{call_id}] Session ended: {dur:.1f}s, {total_turns} turns")
 
 

@@ -1,0 +1,45 @@
+# Мультиагентная конфигурация для IDram
+#
+# managing_agent — классификатор (роутер), определяет намерение звонящего.
+# agents — специализированные агенты, каждый со своим промптом.
+
+managing_agent:
+  name: "Диспетчер"
+  model: ""               # пустая строка = модель из config.json
+  temperature: 0.1         # низкая — нужен детерминизм
+  max_tokens: 10           # ответ = одно слово (agent_id)
+  prompt: prompts/router.txt
+  color: "#9E9E9E"
+
+agents:
+  general:
+    name: "Общие вопросы"
+    prompt: prompts/general.txt
+    temperature: 0.5
+    max_tokens: 80
+    color: "#4CAF50"
+
+  transfers:
+    name: "Денежные переводы"
+    prompt: prompts/transfers.txt
+    temperature: 0.4
+    max_tokens: 100
+    color: "#2196F3"
+
+  payments:
+    name: "Платежи и пополнения"
+    prompt: prompts/payments.txt
+    temperature: 0.4
+    max_tokens: 100
+    color: "#FF9800"
+
+  complaint:
+    name: "Жалобы и проблемы"
+    prompt: prompts/complaint.txt
+    temperature: 0.6
+    max_tokens: 120
+    color: "#F44336"
+
+routing:
+  sticky: true
+  fallback: general

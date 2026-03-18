@@ -162,4 +162,9 @@ def load_config(robot_dir: str | Path) -> dict:
     cfg["robot_dir"] = str(robot_dir)
     cfg["platform_root"] = str(platform_root)
 
+    # agents.yaml (мультиагентный режим)
+    from .agent import load_agents_config
+    agents_config = load_agents_config(robot_dir)
+    cfg["agents_config"] = agents_config  # None если файла нет
+
     return cfg
