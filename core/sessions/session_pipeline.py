@@ -1,8 +1,10 @@
 """
 Единая сессия голосового пайплайна.
-WebSocket → VAD → ASR → LLM(stream) → TTS → WebSocket
+WebSocket → VAD → ASR → [Router → Agent] → LLM(stream) → TTS → WebSocket
 
-Один класс обрабатывает любого робота — вся специфика в config.
+Поддерживает два режима:
+- Single-agent: один LLM с одним промптом (если нет agents.yaml)
+- Multi-agent: роутер классифицирует → нужный агент отвечает (если есть agents.yaml)
 """
 import asyncio
 import logging
@@ -16,6 +18,7 @@ from ..audio import downsample, load_wav
 from ..vad import EnergyVAD
 from ..logging import send_telegram, format_call_report
 from ..logging import save_call_log
+from ..router import AgentRouter
 
 logger = logging.getLogger("core.sessions.session_pipeline")
 
@@ -51,6 +54,11 @@ class PipelineSession:
         self.asr_engine = None
         self.llm_engine = None
         self.tts_engine = None
+
+        # Мультиагентный режим
+        self.agents_config = cfg.get("agents_config")  # AgentsConfig | None
+        self.router = None           # AgentRouter (если мультиагент)
+        self.agent_llm_engines = {}  # agent_id → BaseLLM
 
         # VAD
         vad_cfg = cfg["vad"]
@@ -123,6 +131,28 @@ class PipelineSession:
                                   model=llm_cfg.get("model", ""),
                                   temperature=llm_cfg.get("temperature", 0.5),
                                   max_tokens=llm_cfg.get("max_tokens", 80))
+
+        # === Мультиагентный режим ===
+        if self.agents_config:
+            llm_kwargs = {
+                "provider": llm_cfg.get("provider", "yandex"),
+                "api_key": secrets["yandex_api_key"],
+                "folder_id": secrets["yandex_folder_id"],
+                "model": llm_cfg.get("model", ""),
+            }
+            self.router = AgentRouter(self.agents_config, llm_kwargs)
+
+            for agent_id, agent in self.agents_config.agents.items():
+                self.agent_llm_engines[agent_id] = get_llm(
+                    llm_kwargs["provider"],
+                    api_key=llm_kwargs["api_key"],
+                    folder_id=llm_kwargs["folder_id"],
+                    model=agent.model or llm_kwargs["model"],
+                    temperature=agent.temperature,
+                    max_tokens=agent.max_tokens,
+                )
+            agent_ids = list(self.agents_config.agents.keys())
+            logger.info(f"[{self.call_id}] Multi-agent: router + {agent_ids}")
 
         logger.info(f"[{self.call_id}] Providers ready: "
                      f"ASR={asr_cfg['provider']} TTS={tts_cfg['provider']} "
@@ -224,6 +254,18 @@ class PipelineSession:
                 except Exception:
                     pass
 
+        # Cleanup мультиагентных движков
+        if self.router:
+            try:
+                await self.router.close()
+            except Exception:
+                pass
+        for engine in self.agent_llm_engines.values():
+            try:
+                await engine.close()
+            except Exception:
+                pass
+
     # ── VAD + обработка аудио ──────────────────────────────────────
 
     async def handle_audio(self, pcm_data: bytes):
@@ -288,6 +330,29 @@ class PipelineSession:
                 asr_latency_ms=asr_ms,
             ))
 
+        # === Выбор LLM и промпта (single-agent или multi-agent) ===
+        if self.router and self.agents_config:
+            # Multi-agent: классифицируем → выбираем агента
+            tr0 = time.time()
+            agent_id = await self.router.classify(text, self.messages)
+            router_ms = int((time.time() - tr0) * 1000)
+            logger.info(f"[{self.call_id}] Router ({router_ms}ms): → {agent_id}")
+
+            agent = self.agents_config.get_agent(agent_id)
+            active_llm = self.agent_llm_engines.get(agent_id, self.llm_engine)
+
+            # Формируем сообщения с промптом выбранного агента
+            agent_messages = [{"role": "system", "content": agent.system_prompt}]
+            for msg in self.messages:
+                if msg["role"] != "system":
+                    agent_messages.append(msg)
+        else:
+            # Single-agent: как раньше
+            active_llm = self.llm_engine
+            agent_messages = self.messages
+            agent_id = None
+            router_ms = 0
+
         # === LLM → TTS streaming по предложениям ===
         tl = time.time()
         full_response = ""
@@ -295,7 +360,7 @@ class PipelineSession:
         first_audio_ms = None
 
         try:
-            async for sentence in self.llm_engine.chat_stream_sentences(self.messages):
+            async for sentence in active_llm.chat_stream_sentences(agent_messages):
                 if not self.is_active or self.barge_in_triggered:
                     logger.info(f"[{self.call_id}] Stream interrupted")
                     break
@@ -304,10 +369,11 @@ class PipelineSession:
                 sentence_num += 1
                 llm_ms = int((time.time() - tl) * 1000)
 
+                agent_tag = f"[{agent_id}] " if agent_id else ""
                 if sentence_num == 1:
-                    logger.info(f"[{self.call_id}] LLM 1st ({llm_ms}ms): \"{sentence[:60]}\"")
+                    logger.info(f"[{self.call_id}] {agent_tag}LLM 1st ({llm_ms}ms): \"{sentence[:60]}\"")
                 else:
-                    logger.info(f"[{self.call_id}] LLM #{sentence_num}: \"{sentence[:60]}\"")
+                    logger.info(f"[{self.call_id}] {agent_tag}LLM #{sentence_num}: \"{sentence[:60]}\"")
 
                 # TTS
                 tt = time.time()
@@ -348,7 +414,8 @@ class PipelineSession:
                 ))
 
         total_ms = int((time.time() - t0) * 1000)
-        logger.info(f"[{self.call_id}] Pipeline: {total_ms}ms total, ASR={asr_ms}ms, "
+        agent_info = f"agent={agent_id}, router={router_ms}ms, " if agent_id else ""
+        logger.info(f"[{self.call_id}] Pipeline: {total_ms}ms total, {agent_info}ASR={asr_ms}ms, "
                      f"1st_audio={first_audio_ms}ms, sentences={sentence_num}, "
                      f"ctx={len(self.messages)}")
 
