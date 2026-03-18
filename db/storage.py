@@ -168,7 +168,9 @@ class Storage:
                               llm_provider: str = "",
                               llm_latency_ms: int = 0,
                               tts_provider: str = "",
-                              tts_latency_ms: int = 0):
+                              tts_latency_ms: int = 0,
+                              agent_id: str = "",
+                              agent_name: str = ""):
         """Бот ответил — записать сегмент + pipeline steps."""
         now = datetime.now(timezone.utc)
         segment = {
@@ -180,6 +182,9 @@ class Storage:
             "tts_latency_ms": tts_latency_ms,
             "timestamp": now,
         }
+        if agent_id:
+            segment["agent_id"] = agent_id
+            segment["agent_name"] = agent_name
 
         # MongoDB
         try:

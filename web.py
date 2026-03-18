@@ -359,11 +359,14 @@ async def ws_endpoint(ws: WebSocket):
                             # Storage: ответ бота (pipeline)
                             if storage:
                                 try:
+                                    agent_name = agent.name if agent_id and agents_config else ""
                                     await storage.on_bot_response(
                                         call_id=call_id,
                                         text=full_response.strip(),
                                         llm_provider=cfg["llm"].get("provider", "yandex"),
                                         tts_provider=cfg["tts"]["provider"],
+                                        agent_id=agent_id or "",
+                                        agent_name=agent_name,
                                     )
                                 except Exception as e:
                                     logger.error(f"[{call_id}] Storage on_bot_response: {e}")

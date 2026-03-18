@@ -404,6 +404,7 @@ class PipelineSession:
             # Storage: ответ бота
             if self.storage:
                 llm_total_ms = int((time.time() - tl) * 1000)
+                agent_name = agent.name if agent_id and agent else ""
                 asyncio.create_task(self.storage.on_bot_response(
                     call_id=self.call_id,
                     text=full_response.strip(),
@@ -411,6 +412,8 @@ class PipelineSession:
                     llm_latency_ms=llm_total_ms,
                     tts_provider=self.cfg["tts"]["provider"],
                     tts_latency_ms=0,
+                    agent_id=agent_id or "",
+                    agent_name=agent_name,
                 ))
 
         total_ms = int((time.time() - t0) * 1000)
