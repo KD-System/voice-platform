@@ -1,6 +1,12 @@
 """Yandex SpeechKit TTS (v1 + v3 Brand Voice)"""
+import base64
+import json
+import logging
+
 import aiohttp
 from .base import BaseTTS
+
+logger = logging.getLogger(__name__)
 
 
 class YandexTTS(BaseTTS):
@@ -61,7 +67,7 @@ class YandexTTS(BaseTTS):
                 raise RuntimeError(f"TTS v1 error {resp.status}: {error[:200]}")
 
     async def _synthesize_v3(self, text: str) -> dict:
-        """Yandex TTS v3 API for Brand Voice."""
+        """Yandex TTS v3 API for Brand Voice (streaming JSON lines)."""
         session = await self._get_session()
         # Extract folder_id from model_uri: tts://FOLDER_ID/model/...
         bv_folder = self.folder_id
@@ -94,18 +100,37 @@ class YandexTTS(BaseTTS):
         }
         async with session.post(
             self.URL_V3, headers=headers, json=body,
-            timeout=aiohttp.ClientTimeout(total=15)
+            timeout=aiohttp.ClientTimeout(total=30)
         ) as resp:
-            if resp.status == 200:
-                audio = await resp.read()
-                return {
-                    "audio": audio,
-                    "sample_rate": self.sample_rate,
-                    "format": "pcm16",
-                }
-            else:
+            if resp.status != 200:
                 error = await resp.text()
-                raise RuntimeError(f"TTS v3 error {resp.status}: {error[:200]}")
+                raise RuntimeError(f"TTS v3 error {resp.status}: {error[:300]}")
+
+            # v3 API returns streaming JSON lines with base64 audio chunks
+            audio_bytes = b""
+            async for line in resp.content:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                    chunk_b64 = (data
+                                 .get("result", {})
+                                 .get("audioChunk", {})
+                                 .get("data", ""))
+                    if chunk_b64:
+                        audio_bytes += base64.b64decode(chunk_b64)
+                except (json.JSONDecodeError, Exception) as e:
+                    logger.warning(f"TTS v3 chunk parse error: {e}")
+
+            if not audio_bytes:
+                logger.error("TTS v3: no audio data received")
+
+            return {
+                "audio": audio_bytes,
+                "sample_rate": self.sample_rate,
+                "format": "pcm16",
+            }
 
     async def close(self):
         if self.session and not self.session.closed:
