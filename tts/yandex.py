@@ -63,9 +63,16 @@ class YandexTTS(BaseTTS):
     async def _synthesize_v3(self, text: str) -> dict:
         """Yandex TTS v3 API for Brand Voice."""
         session = await self._get_session()
+        # Extract folder_id from model_uri: tts://FOLDER_ID/model/...
+        bv_folder = self.folder_id
+        if self.model_uri.startswith("tts://"):
+            parts = self.model_uri.split("/")
+            if len(parts) >= 3:
+                bv_folder = parts[2]
         headers = {
             "Authorization": f"Api-Key {self.api_key}",
             "Content-Type": "application/json",
+            "x-folder-id": bv_folder,
         }
         hints = []
         if self.speed and self.speed != 1.0:
