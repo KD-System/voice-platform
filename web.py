@@ -122,7 +122,11 @@ def create_engines(cfg: dict):
                                  api_key=secrets["tts_api_key"] or secrets["yandex_api_key"],
                                  folder_id=secrets["yandex_folder_id"],
                                  voice=tts_cfg.get("voice", "alena"),
-                                 language=tts_cfg.get("language", "ru-RU"))
+                                 language=tts_cfg.get("language", "ru-RU"),
+                                 sample_rate=tts_cfg.get("sample_rate", 48000),
+                                 model_uri=tts_cfg.get("model_uri", ""),
+                                 speed=tts_cfg.get("speed", 1.0),
+                                 role=tts_cfg.get("role", ""))
 
     return asr, llm_engine, tts_engine
 

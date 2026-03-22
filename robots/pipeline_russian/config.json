@@ -18,7 +18,8 @@
     "voice": "alena",
     "language": "ru-RU",
     "speed": 1.0,
-    "sample_rate": 48000
+    "sample_rate": 48000,
+    "model_uri": "tts://b1g4i781lu629vsf49oi/bvss-v1/latest@tamr9r3945latpnchg3sv"
   },
 
   "vad": {
