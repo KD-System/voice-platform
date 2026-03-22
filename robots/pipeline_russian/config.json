@@ -15,7 +15,6 @@
 
   "tts": {
     "provider": "yandex",
-    "voice": "alena",
     "language": "ru-RU",
     "speed": 1.0,
     "sample_rate": 48000,
