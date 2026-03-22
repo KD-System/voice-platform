@@ -128,7 +128,7 @@ def create_engines(cfg: dict):
             tts_engine = get_tts("yandex",
                                  api_key=bv_api_key,
                                  folder_id=bv_folder_id,
-                                 voice=tts_cfg.get("voice", ""),
+                                 voice=tts_cfg.get("voice", "alena"),
                                  language=tts_cfg.get("language", "ru-RU"),
                                  sample_rate=tts_cfg.get("sample_rate", 48000),
                                  model_uri=bv_model,
@@ -143,20 +143,14 @@ async def index():
     return HTMLResponse(HTML.replace("{{ROBOT_NAME}}", ROBOT_NAME))
 
 
-_web_call_counter = 0
-
-
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
-    global _web_call_counter
-    _web_call_counter += 1
-
     await ws.accept()
     cfg = CFG
     storage = STORAGE
     mode = cfg.get("mode", "pipeline")
 
-    call_id = f"web-{_web_call_counter:04d}"
+    call_id = f"web-{int(time.time()*1000)}"
     call_start = time.time()
     total_turns = 0
     barge_in_count = 0

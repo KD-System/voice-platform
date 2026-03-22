@@ -127,7 +127,7 @@ class PipelineSession:
             self.tts_engine = get_tts("yandex",
                                       api_key=bv_api_key,
                                       folder_id=bv_folder_id,
-                                      voice=tts_cfg.get("voice", ""),
+                                      voice=tts_cfg.get("voice", "alena"),
                                       language=tts_cfg.get("language", "ru-RU"),
                                       sample_rate=tts_cfg.get("sample_rate", 48000),
                                       model_uri=bv_model,
