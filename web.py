@@ -138,6 +138,19 @@ def create_engines(cfg: dict):
     return asr, llm_engine, tts_engine
 
 
+WS_CHUNK_SIZE = 512 * 1024  # 512 KB — safely under default 1 MB WS limit
+
+
+async def _send_audio(ws: WebSocket, audio: bytes, sample_rate: int):
+    """Send audio via WebSocket, splitting into chunks if needed."""
+    await ws.send_json({"type": "audio", "sample_rate": sample_rate})
+    if len(audio) <= WS_CHUNK_SIZE:
+        await ws.send_bytes(audio)
+    else:
+        for offset in range(0, len(audio), WS_CHUNK_SIZE):
+            await ws.send_bytes(audio[offset:offset + WS_CHUNK_SIZE])
+
+
 @app.get("/")
 async def index():
     return HTMLResponse(HTML.replace("{{ROBOT_NAME}}", ROBOT_NAME))
@@ -251,8 +264,7 @@ async def ws_endpoint(ws: WebSocket):
 
         # Приветствие
         if greeting_pcm:
-            await ws.send_json({"type": "audio", "sample_rate": greeting_rate})
-            await ws.send_bytes(greeting_pcm)
+            await _send_audio(ws, greeting_pcm, greeting_rate)
             await ws.send_json({"type": "response_end"})
             if greeting_text:
                 messages.append({"role": "assistant", "content": greeting_text})
@@ -264,8 +276,7 @@ async def ws_endpoint(ws: WebSocket):
             audio = r.get("audio", b"")
             rate = r.get("sample_rate", 48000)
             if audio:
-                await ws.send_json({"type": "audio", "sample_rate": rate})
-                await ws.send_bytes(audio)
+                await _send_audio(ws, audio, rate)
             await ws.send_json({"type": "response_end"})
 
         await ws.send_json({"type": "listening"})
@@ -354,8 +365,7 @@ async def ws_endpoint(ws: WebSocket):
                             audio_out = r.get("audio", b"")
                             rate = r.get("sample_rate", 48000)
                             if audio_out:
-                                await ws.send_json({"type": "audio", "sample_rate": rate})
-                                await ws.send_bytes(audio_out)
+                                await _send_audio(ws, audio_out, rate)
 
                         if full_response.strip():
                             messages.append({"role": "assistant", "content": full_response.strip()})
@@ -385,8 +395,7 @@ async def ws_endpoint(ws: WebSocket):
 
                         if chosen in tracks:
                             pcm_out, rate = tracks[chosen]
-                            await ws.send_json({"type": "audio", "sample_rate": rate})
-                            await ws.send_bytes(pcm_out)
+                            await _send_audio(ws, pcm_out, rate)
                             await ws.send_json({"type": "transcript", "role": "bot", "text": f"[{chosen}]"})
                             transcript.append(f"\U0001f916Bot: [{chosen}]")
                             # Storage: ответ бота (llm_script)
