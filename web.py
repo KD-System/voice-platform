@@ -118,13 +118,20 @@ def create_engines(cfg: dict):
                                  speed=tts_cfg.get("speed", 1.0),
                                  proxy=tts_cfg.get("proxy", ""))
         else:
+            bv_model = tts_cfg.get("model_uri", "")
+            if bv_model and secrets.get("brandvoice_api_key"):
+                bv_api_key = secrets["brandvoice_api_key"]
+                bv_folder_id = secrets.get("brandvoice_folder_id", secrets["yandex_folder_id"])
+            else:
+                bv_api_key = secrets["tts_api_key"] or secrets["yandex_api_key"]
+                bv_folder_id = secrets["yandex_folder_id"]
             tts_engine = get_tts("yandex",
-                                 api_key=secrets["tts_api_key"] or secrets["yandex_api_key"],
-                                 folder_id=secrets["yandex_folder_id"],
-                                 voice=tts_cfg.get("voice", "alena"),
+                                 api_key=bv_api_key,
+                                 folder_id=bv_folder_id,
+                                 voice=tts_cfg.get("voice", ""),
                                  language=tts_cfg.get("language", "ru-RU"),
                                  sample_rate=tts_cfg.get("sample_rate", 48000),
-                                 model_uri=tts_cfg.get("model_uri", ""),
+                                 model_uri=bv_model,
                                  speed=tts_cfg.get("speed", 1.0),
                                  role=tts_cfg.get("role", ""))
 

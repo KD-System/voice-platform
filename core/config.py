@@ -120,6 +120,8 @@ def load_config(robot_dir: str | Path) -> dict:
         "yandex_api_key": os.getenv("YANDEX_API_KEY", ""),
         "yandex_folder_id": os.getenv("YANDEX_FOLDER_ID", ""),
         "tts_api_key": os.getenv("TTS_API_KEY", os.getenv("YANDEX_API_KEY", "")),
+        "brandvoice_api_key": os.getenv("BRANDVOICE_API_KEY", ""),
+        "brandvoice_folder_id": os.getenv("BRANDVOICE_FOLDER_ID", ""),
         "tts_token": os.getenv("TTS_TOKEN", ""),
         "tts_email": os.getenv("TTS_EMAIL", ""),
         "tg_token": os.getenv("TG_TOKEN", ""),
