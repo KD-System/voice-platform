@@ -7,7 +7,7 @@ class YandexTTS(BaseTTS):
     URL_V1 = "https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize"
     URL_V3 = "https://tts.api.cloud.yandex.net/tts/v3/utteranceSynthesis"
 
-    def __init__(self, api_key: str, folder_id: str, voice: str = "alena",
+    def __init__(self, api_key: str, folder_id: str, voice: str = "",
                  emotion: str = "neutral", language: str = "ru-RU",
                  sample_rate: int = 48000, model_uri: str = "",
                  speed: float = 1.0, role: str = ""):
@@ -39,7 +39,7 @@ class YandexTTS(BaseTTS):
         data = {
             "text": text,
             "lang": self.language,
-            "voice": self.voice,
+            "voice": self.voice or "alena",
             "emotion": self.emotion,
             "folderId": self.folder_id,
             "format": "lpcm",
@@ -68,8 +68,6 @@ class YandexTTS(BaseTTS):
             "Content-Type": "application/json",
         }
         hints = []
-        if self.voice:
-            hints.append({"voice": self.voice})
         if self.speed and self.speed != 1.0:
             hints.append({"speed": self.speed})
         if self.role:
